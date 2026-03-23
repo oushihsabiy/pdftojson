@@ -285,6 +285,37 @@ def load_config() -> Dict[str, Any]:
     return data
 
 
+def _find_prompt_dir() -> Path:
+    """Locate the src/prompt/ directory containing .md prompt templates."""
+    here = Path(__file__).resolve().parent
+    # Try sibling directory first: src/book/../prompt
+    candidate = here.parent / "prompt"
+    if candidate.is_dir():
+        return candidate
+    # Walk up to find src/prompt
+    for d in [here] + list(here.parents):
+        c = d / "src" / "prompt"
+        if c.is_dir():
+            return c
+    raise FileNotFoundError("src/prompt/ directory not found (checked script parents).")
+
+
+_PROMPT_CACHE: Dict[str, str] = {}
+
+
+def _load_prompt_template(filename: str) -> str:
+    """Load a prompt template from src/prompt/<filename>. Cached after first read."""
+    if filename in _PROMPT_CACHE:
+        return _PROMPT_CACHE[filename]
+    prompt_dir = _find_prompt_dir()
+    p = prompt_dir / filename
+    if not p.exists():
+        raise FileNotFoundError(f"Prompt template not found: {p}")
+    text = p.read_text(encoding="utf-8").strip()
+    _PROMPT_CACHE[filename] = text
+    return text
+
+
 def _compact_text(s: str, max_chars: int = 320) -> str:
     t = re.sub(r"\s+", " ", s or "").strip()
     if len(t) <= max_chars:
@@ -389,126 +420,38 @@ def build_naturalize_input(record: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def make_prompt(payload: Dict[str, Any]) -> str:
-    return (
-        "You are given ONE mathematical exercise record extracted from a textbook.\n"
-        "Your job is to rewrite it into standard mathematical English while staying strictly faithful to the original statement.\n\n"
-        "Priority of information:\n"
-        "1. original_problem is the primary source.\n"
-        "2. context_references/problem_with_context provide reference formulas/theorems/algorithms that MUST be integrated when clearly relevant.\n"
-        "3. equations contains formulas that must be preserved when they belong to the exercise.\n"
-        "4. contexts can help resolve nearby references, but you must not invent content from it.\n\n"
-        "Integration rule for references:\n"
-        "- MUST incorporate all clearly relevant referenced conditions/formulas from context_references/problem_with_context into the standardized problem statement.\n"
-        "- MUST resolve local pointers like 'Theorem 11.8', '(11.46)', 'Algorithm 11.5' into explicit mathematical wording when support is present in input.\n"
-        "- If reference content is available, DO NOT write pointer-only phrases such as 'assume the hypotheses of Theorem X.Y'; instead, spell out those hypotheses explicitly.\n"
-        "- If a referenced formula/algorithm text is available, inline the concrete mathematical statement or procedure condition that is needed for the exercise.\n"
-        "- Avoid leaving bare citation markers as substitutes for mathematical content.\n"
-        "- If a reference is ambiguous or unsupported, keep pointer text and do NOT invent details.\n\n"
-        "Hard constraints:\n"
-        "- Do NOT solve the problem.\n"
-        "- Do NOT add any assumptions, definitions, domains, properties, or new symbols that are not explicit in the input.\n"
-        "- Do NOT add new tasks/questions/sub-questions.\n"
-        "- Do NOT change task type (prove/show/find/derive/evaluate/minimize/etc.).\n"
-        "- Do NOT remove essential formulas, quantifiers, constraints, variables, domains, or conditions.\n"
-        "- Keep the original meaning and task unchanged; only standardize wording and notation.\n"
-        "- Remove non-mathematical filler and redundant narrative words, but do NOT remove mathematical content.\n"
-        "- Prefer concise proposition-style mathematical phrasing.\n"
-        "- Use formal textbook-style English.\n"
-        "- Prefer explicit mathematical statements over metareferences to numbered items.\n"
-        "- Use STANDARD LaTeX math notation only; no Unicode math symbols.\n"
-        "- Keep formulas compilable and avoid malformed delimiters.\n"
-        "- Return STRICT JSON only, exactly one key.\n\n"
-        "Additional requirements (append-only):\n"
-        "- When references are available in input, explicitly inline the needed assumptions/formulas; avoid unresolved metareferences.\n"
-        "- Keep semantic equivalence exactly: do not strengthen/weaken assumptions, claims, or quantifier scope.\n"
-        "- Ensure all math uses standard TeX commands and valid delimiters.\n\n"
-        "Output JSON schema:\n"
-        '{"problem_standardized_math":"<faithful standardized mathematical exercise statement>"}\n\n'
-        "Input JSON:\n"
-        + json.dumps(payload, ensure_ascii=False)
-    )
+    """Build the step-1 prompt (raw → condition-complete) from the .md template."""
+    template = _load_prompt_template("raw_to_complete.md")
+    return template + "\n\nInput JSON:\n" + json.dumps(payload, ensure_ascii=False)
+
 
 def make_retry_prompt(payload: Dict[str, Any]) -> str:
+    """Retry prompt for step-1 when the previous LLM output was invalid."""
     return (
         "Your previous output was invalid. Try again.\n"
-        "Return STRICT JSON ONLY for one mathematical exercise.\n\n"
+        "Return STRICT JSON ONLY with exactly one key: problem_standardized_math.\n\n"
         "Hard constraints:\n"
         "- English only.\n"
         "- Preserve original meaning, task type, notation, formulas, constraints, and quantifiers.\n"
-        "- MUST integrate clearly relevant references from context_references/problem_with_context into the standardized statement when available.\n"
-        "- Do NOT keep pointer-only wording (for example, 'assume the hypotheses of Theorem X.Y') when referenced content is available; expand it explicitly.\n"
-        "- MUST replace reference-only mentions by concrete mathematical assumptions/formulas extracted from the input whenever possible.\n"
-        "- Remove non-mathematical filler and redundant narrative words only.\n"
-        "- Keep the output concise and proposition-style.\n"
-        "- Do NOT add assumptions, definitions, domains, or new symbols.\n"
-        "- Do NOT add new tasks/questions/sub-questions.\n"
+        "- MUST integrate clearly relevant references from context_references/problem_with_context.\n"
+        "- Do NOT keep pointer-only wording when referenced content is available; expand explicitly.\n"
+        "- Complete implicit conditions needed for well-posedness (weakest sufficient assumptions).\n"
+        "- Do NOT add assumptions beyond what is necessary.\n"
         "- Do NOT solve the problem.\n"
         "- Do NOT output explanation, markdown, or extra keys.\n"
-        "- Use STANDARD LaTeX math notation only; no Unicode math symbols.\n"
-        "- Exactly one key: problem_standardized_math.\n\n"
-        "Additional requirements (append-only):\n"
-        "- Expand pronouns/metareferences (this theorem/result/algorithm/equation) into explicit math content when supported by input.\n"
-        "- Keep final wording proposition-style and faithful to original task intent.\n"
-        "- Keep TeX notation strict and compilable.\n\n"
+        "- Use STANDARD LaTeX math notation only; no Unicode math symbols.\n\n"
         "Output template:\n"
-        '{"problem_standardized_math":"<faithful standardized mathematical exercise statement>"}\n\n'
+        '{"problem_standardized_math":"<condition-complete, self-contained statement>"}\n\n'
         "Input JSON:\n"
         + json.dumps(payload, ensure_ascii=False)
     )
 
-def make_problem_complete_prompt(problem_standardized_math: str) -> str:
-    payload = {"problem_standardized_math": problem_standardized_math}
-    return (
-        "You are given one optimization exercise statement.\n"
-        "Rewrite it into a condition-complete, self-contained, textbook-style problem.\n\n"
-        "Hard constraints:\n"
-        "- Do NOT solve the problem.\n"
-        "- Keep the original mathematical intent and task type.\n"
-        "- Do NOT add unnecessary stronger assumptions.\n"
-        "- Keep notation faithful and LaTeX-friendly.\n"
-        "- Use STANDARD LaTeX math notation only (no Unicode math symbols).\n"
-        "- If the exercise has multiple sub-questions, separate them as numbered items: 1. 2. 3.\n"
-        "- For sets/spaces use \mathbf{R}, \mathbf{N}, \mathbf{Z}, \mathbf{Q}, \mathbf{C} when relevant.\n"
-        "- Use LaTeX operators: \le, \ge, \ne, \in, \subseteq, \to, \times, \cdot, \nabla.\n"
-        "- Keep all formulas compilable and avoid malformed TeX delimiters.\n"
-        "- Use explicit LaTeX commands (for example \\alpha, \\le, \\times, \\mathbf{R}) instead of Unicode math symbols.\n"
-        "- Keep math delimiters consistent: use \\( ... \\) / \\[ ... \\] correctly.\n"
-        "- Return JSON only.\n\n"
-        "Additional requirements (append-only):\n"
-        "- Preserve the exact mathematical intent from problem_standardized_math; only improve completeness/readability.\n"
-        "- Keep integrated dependency conditions explicit in mathematical form, not citation placeholders.\n"
-        "- Do not introduce new symbols unless directly implied by existing notation.\n\n"
-        "Output schema:\n"
-        '{"problem_complete":"<condition-complete statement>"}\n\n'
-        "Input:\n"
-        + json.dumps(payload, ensure_ascii=False)
-    )
 
-def make_problem_concise_prompt(problem_complete: str) -> str:
-    payload = {"problem_complete": problem_complete}
-    return (
-        "You are given one complete optimization problem statement.\n"
-        "Rewrite it to be concise and formalization-friendly while preserving meaning.\n\n"
-        "Hard constraints:\n"
-        "- Do NOT solve the problem.\n"
-        "- Keep all essential assumptions and constraints.\n"
-        "- Remove narrative filler and keep formal mathematical phrasing.\n"
-        "- If there are multiple tasks/sub-questions, split them into numbered items: 1. 2. 3.\n"
-        "- Use STANDARD LaTeX math notation only (no Unicode math symbols).\n"
-        "- Keep LaTeX commands explicit (for example \\alpha, \\mathbf{R}, \\times, \\le).\n"
-        "- Keep notation consistent and compilable; preserve mathematical correctness.\n"
-        "- Keep delimiters and escapes valid LaTeX (no malformed \\(, \\), \\[, \\]).\n"
-        "- Prefer explicit operators \le, \ge, \ne, \in, \subseteq, \to, \times, \cdot.\n"
-        "- Return JSON only.\n\n"
-        "Additional requirements (append-only):\n"
-        "- Keep semantic equivalence with problem_complete exactly.\n"
-        "- Do not compress away dependency assumptions/formulas required by the exercise.\n"
-        "- Keep TeX output standard and parser-stable.\n\n"
-        "Output schema:\n"
-        '{"problem_concise":"<concise statement>"}\n\n'
-        "Input:\n"
-        + json.dumps(payload, ensure_ascii=False)
-    )
+def make_problem_finally_prompt(problem_standardized_math: str) -> str:
+    """Build the step-2 prompt (complete → concise) from the .md template."""
+    template = _load_prompt_template("complete_to_concise.md")
+    payload = {"problem_standardized_math": problem_standardized_math}
+    return template + "\n\nInput JSON:\n" + json.dumps(payload, ensure_ascii=False)
 
 def _jsonish_unescape_preserve_latex(val: str) -> str:
     t = str(val or "")
@@ -829,7 +772,12 @@ def _rewrite_field_via_llm(
     return "", "; ".join(reasons) if reasons else "empty_or_unparseable"
 
 
-def finalize_problem_three_step(
+def _extract_problem_finally_text(raw: str) -> str:
+    """Extract the problem_finally value from LLM output."""
+    return _extract_json_string_by_keys(raw, ["problem_finally", "problem_concise"])
+
+
+def finalize_problem_finally(
     *,
     problem_standardized_math: str,
     client: Optional[OpenAI],
@@ -843,6 +791,7 @@ def finalize_problem_three_step(
     min_english_alpha_ratio: float,
     progress_prefix: str = "",
 ) -> Tuple[str, str]:
+    """Single-step: rewrite condition-complete statement into concise form using complete_to_concise.md."""
     base = _normalize_tex_math_text(str(problem_standardized_math or "").strip())
     if not base:
         if progress_prefix:
@@ -854,32 +803,14 @@ def finalize_problem_three_step(
         return base, "llm_disabled_or_missing_key"
 
     if progress_prefix:
-        print(f"{progress_prefix} step1/2 COMPLETE start", file=sys.stderr)
-    p1, n1 = _rewrite_field_via_llm(
-        client=client,
-        model=model,
-        prompt=make_problem_complete_prompt(base),
-        out_keys=["problem_complete"],
-        max_tokens=max_tokens,
-        retries=llm_retries,
-        cache_dir=cache_dir,
-        cache_enabled=cache_enabled,
-        min_english_words=min_english_words,
-        min_english_alpha_ratio=min_english_alpha_ratio,
-    )
-    if not p1:
-        if progress_prefix:
-            print(f"{progress_prefix} step1/2 COMPLETE fallback -> standardized ({n1})", file=sys.stderr)
-        return base, "complete_fallback:" + n1
-    p1 = _normalize_tex_math_text(p1)
+        print(f"{progress_prefix} CONCISE start", file=sys.stderr)
 
-    if progress_prefix:
-        print(f"{progress_prefix} step2/2 CONCISE start", file=sys.stderr)
-    p2, n2 = _rewrite_field_via_llm(
+    prompt = make_problem_finally_prompt(base)
+    pf, pf_note = _rewrite_field_via_llm(
         client=client,
         model=model,
-        prompt=make_problem_concise_prompt(p1),
-        out_keys=["problem_concise"],
+        prompt=prompt,
+        out_keys=["problem_finally", "problem_concise"],
         max_tokens=max_tokens,
         retries=llm_retries,
         cache_dir=cache_dir,
@@ -887,20 +818,20 @@ def finalize_problem_three_step(
         min_english_words=min_english_words,
         min_english_alpha_ratio=min_english_alpha_ratio,
     )
-    if not p2:
+    if not pf:
         if progress_prefix:
-            print(f"{progress_prefix} step2/2 CONCISE fallback -> complete ({n2})", file=sys.stderr)
-        return p1, "concise_fallback:" + n2
-    p2 = _number_multi_questions(_normalize_tex_math_text(p2))
-    if not _math_statement_sane(p2):
+            print(f"{progress_prefix} CONCISE fallback -> standardized ({pf_note})", file=sys.stderr)
+        return base, "concise_fallback:" + pf_note
+
+    pf = _number_multi_questions(_normalize_tex_math_text(pf))
+    if not _math_statement_sane(pf):
         if progress_prefix:
-            print(f"{progress_prefix} step2/2 output invalid -> complete", file=sys.stderr)
-        return p1, "concise_invalid_fallback_complete"
+            print(f"{progress_prefix} CONCISE output invalid -> standardized", file=sys.stderr)
+        return base, "concise_invalid_fallback_standardized"
 
     if progress_prefix:
         print(f"{progress_prefix} done", file=sys.stderr)
-    # Third step removed by design: use concise text as final output.
-    return p2, "ok"
+    return pf, "ok"
 
 
 def _fallback_problem(record: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -953,7 +884,7 @@ def naturalize_one(
         out["naturalize_prompt_version"] = prompt_version
         out["naturalize_notes"] = "reuse_existing_problem_standardized_math"
         if enable_problem_finally:
-            pf, pf_note = finalize_problem_three_step(
+            pf, pf_note = finalize_problem_finally(
                 problem_standardized_math=existing_standardized,
                 client=client,
                 use_llm=use_llm,
@@ -1038,7 +969,7 @@ def naturalize_one(
         if progress_prefix:
             print(f"{progress_prefix} standardized ok", file=sys.stderr)
         if enable_problem_finally:
-            pf, pf_note = finalize_problem_three_step(
+            pf, pf_note = finalize_problem_finally(
                 problem_standardized_math=standardized,
                 client=client,
                 use_llm=use_llm,
