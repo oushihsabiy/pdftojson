@@ -1,0 +1,15 @@
+{
+  "INPUT_PDF_DIR": "input_pdfs",
+  "OUTPUT_JSON_DIR": "output_json",
+  "WORK_DIR": "work",
+  "PIPELINE_MODE": "book",
+  "RAWJSON_SRC_DIR": "src/exercise/rawjson",
+  "OCR_MAX_TOKENS": null,
+  "ONLY_THESE_STEMS": [],
+  "OVERWRITE_JSON": false,
+  "OCR_WORKERS": 4,
+  "THINK_WORKERS": 4,
+  "STRICT_RESUME": true,
+  "ATOMIC_OUTPUTS": true,
+  "CLEAN_STALE_TMPS": true
+}
