@@ -1,0 +1,11 @@
+{
+  "in_json": "/Users/yibashishuo/Desktop/pdftojson/output_json/book/Numerical_Optimization_Chapter_11.json",
+  "out_json": "/Users/yibashishuo/Desktop/pdftojson/output_json_naturalized/book/Numerical_Optimization_Chapter_11.json",
+  "rows": 12,
+  "llm_touched": 12,
+  "ok": 12,
+  "fallback": 0,
+  "skipped": 0,
+  "failed": 0,
+  "seconds": 400.0163
+}

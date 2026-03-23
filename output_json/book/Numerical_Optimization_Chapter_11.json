@@ -1,0 +1,397 @@
+[
+  {
+    "index": 1,
+    "problem": "Exercise 0.002\n& 0 & -0.235 & 0 & 5.67 & 0 & -0.921 & -6.51 \\\\\n0 & 1.0 & 0 & -1.0 & 0 & -0.168 & 0 & 0 \\\\\n0 & 0 & -1.0 & 0 & -0.196 & 0 & -0.0071 & 0\n\\end{bmatrix},\n\n\\[\nand the nonlinear part is defined by\n\\]\n\n\\[\n\\phi(x) =\n\\begin{bmatrix}\n-0.727x_2x_3 + 8.39x_3x_4 - 684.4x_4x_5 + 63.5x_4x_2\n\\end{bmatrix}\n\\]",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "其他"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 0.002",
+    "problem_with_context": "Exercise 0.002\n& 0 & -0.235 & 0 & 5.67 & 0 & -0.921 & -6.51 \\\\\n0 & 1.0 & 0 & -1.0 & 0 & -0.168 & 0 & 0 \\\\\n0 & 0 & -1.0 & 0 & -0.196 & 0 & -0.0071 & 0\n\\end{bmatrix},\n\n\\[\nand the nonlinear part is defined by\n\\]\n\n\\[\n\\phi(x) =\n\\begin{bmatrix}\n-0.727x_2x_3 + 8.39x_3x_4 - 684.4x_4x_5 + 63.5x_4x_2\n\\end{bmatrix}\n\\]",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  },
+  {
+    "index": 2,
+    "problem": "Exercise 0.949\n$x_1x_3 + 0.173x_1x_5$ \\\\\n$-0.716x_1x_2 - 1.578x_1x_4 + 1.132x_4x_2$ \\\\\n$-x_1x_5$ \\\\\n$x_1x_4$\n\\end{bmatrix}.\n\n\\[\nThe first three variables $x_1$, $x_2$, $x_3$, represent the rates of roll, pitch, and yaw, respectively, while $x_4$ is the incremental angle of attack and $x_5$ the sideslip angle. The last three variables $x_6$, $x_7$, $x_8$ are the controls; they represent the deflections of the elevator, aileron, and rudder, respectively.\n\nFor a given choice of the control variables $x_6$, $x_7$, $x_8$ we obtain a system of 5 equations and 5 unknowns. If we wish to study the behavior of the aircraft as the controls are changed, we need to solve a system of nonlinear equations with unknowns $x_1$, $x_2$, $\\ldots$, $x_5$ for each setting of the controls.\n\nDespite the many similarities between nonlinear equations and unconstrained and least-squares optimization algorithms, there are also some important differences. To obtain quadratic convergence in optimization we require second derivatives of the objective function, whereas knowledge of the first derivatives is sufficient in nonlinear equations.\n\n[Figure 11.1: The function $r(x)=\\sin(5x)-x$ has three roots.]\n\nQuasi-Newton methods are perhaps less useful in nonlinear equations than in optimization. In unconstrained optimization, the objective function is the natural choice of merit function that gauges progress towards the solution, but in nonlinear equations various merit functions can be used, all of which have some drawbacks. Line search and trust-region techniques play an equally important role in optimization, but one can argue that trust-region algorithms have certain theoretical advantages in solving nonlinear equations.\n\nSome of the difficulties that arise in trying to solve nonlinear equations can be illustrated by a simple scalar example $(n = 1)$. Suppose we have\n\\]\n\n\\[\nr(x) = \\sin(5x) - x,\n\\tag{11.3}\n\\]\n\nas plotted in Figure 11.1. From this figure we see that there are three solutions of the problem $r(x)=0$, also known as roots of $r$, located at zero and approximately $\\pm 0.519148$. This situation of multiple solutions is similar to optimization problems where, for example, a function may have more than one local minimum. It is not quite the same, however: In the case of optimization, one of the local minima may have a lower function value than the others (making it a ``better'' solution), while in nonlinear equations all solutions are equally good from a mathematical viewpoint. (If the modeler decides that the solution\n\nfound by the algorithm makes no sense on physical grounds, their model may need to be reformulated.)\n\nIn this chapter we start by outlining algorithms related to Newton's method and examining their local convergence properties. Besides Newton's method itself, these include Broyden's quasi-Newton method, inexact Newton methods, and tensor methods. We then address global convergence, which is the issue of trying to force convergence to a solution from a remote starting point. Finally, we discuss a class of methods in which an ``easy'' problem---one to which the solution is well known---is gradually transformed into the problem $F(x)=0$. In these so-called continuation (or homotopy) methods, we track the solution as the problem changes, with the aim of finishing up at a solution of $F(x)=0$.\n\nThroughout this chapter we make the assumption that the vector function $r$ is continuously differentiable in the region $\\mathcal{D}$ containing the values of $x$ we are interested in. In other words, the Jacobian $J(x)$ (the matrix of first partial derivatives of $r(x)$ defined in the Appendix and in (10.3)) exists and is continuous. We say that $x^*$ satisfying $r(x^*)=0$ is a degenerate solution if $J(x^*)$ is singular, and a nondegenerate solution otherwise.",
+    "proof": "Sometimes, components of the unknown or function vector or the Jacobian will blow up. Another, more exotic, kind of behavior is cycling, where the iterates move between distinct regions of the parameter space without approaching a root. An example is the scalar function\n\n\\[\nr(x)=-x^5+x^3+4x,\n\\]\n\nwhich has five nondegenerate roots. When started from the point $x_0=1$, Newton's method produces a sequence of iterates that oscillates between $1$ and $-1$ (see Exercise 11.3) without converging to any of the roots.\n\nThe Newton and Broyden methods can be made more robust by using line-search and trust-region techniques similar to those described in Chapters 3 and 4. Before describing these techniques, we need to define a merit function, which is a scalar-valued function of $x$ that indicates whether a new iterate is better or worse than the current iterate, in the sense of making progress toward a root of $r$. In unconstrained optimization, the objective function $f$ is itself a natural merit function; most algorithms for minimizing $f$ require a decrease in $f$ at each iteration. In nonlinear equations, the merit function is obtained by combining the $n$ components of the vector $r$ in some way.\n\nThe most widely used merit function is the sum of squares, defined by\n\n\\[\nf(x)=\\frac{1}{2}\\|r(x)\\|^2=\\frac{1}{2}\\sum_{i=1}^n r_i^2(x).\n\\tag{11.35}\n\\]\n\n(The factor $1/2$ is introduced for convenience.) Any root $x^\\star$ of $r$ obviously has $f(x^\\star)=0$, and since $f(x)\\geq 0$ for all $x$, each root is a minimizer of $f$. However, local minimizers of $f$ are not roots of $r$ if $f$ is strictly positive at the point in question. Still, the merit function\n\n$(11.35)$ has been used successfully in many applications and is implemented in a number of software packages.\n\nThe merit function for the example (11.3) is plotted in Figure 11.2. It shows three local minima corresponding to the three roots, but there are many other local minima (for example, those at around $\\pm 1.53053$). Local minima like these that are not roots of $f$ satisfy an interesting property. Since\n\n\\[\n\\nabla f(x^*) = J(x^*)^T r(x^*) = 0,\n\\\n\\]\n\nwe can have $r(x^*) \\neq 0$ only if $J(x^*)$ is singular.\n\nSince local minima for the sum-of-squares merit function may be points of attraction for the algorithms described in this section, global convergence results for the algorithms discussed here are less satisfactory than for similar algorithms applied to unconstrained optimization.\n\nOther merit functions are also used in practice. One such is the $\\ell_1$ norm merit function defined by\n\n\\[\nf_1(x) = \\|r(x)\\|_1 = \\sum_{i=1}^m |r_i(x)|.\n\\]\n\nThis function is studied in Chapters 17 and 18 in the context of algorithms for constrained optimization.",
+    "direct_answer": "\\[\nf_1(x) = \\|r(x)\\|_1 = \\sum_{i=1}^m |r_i(x)|.\n\\]",
+    "题目类型": [
+      "求值题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 0.949",
+    "problem_with_context": "Reference formulas: (11.35) \\[\nf(x)=\\frac{1}{2}\\|r(x)\\|^2=\\frac{1}{2}\\sum_{i=1}^n r_i^2(x).\n\\tag{11.35}\n\\]; (11.3) \\[\nr(x) = \\sin(5x) - x,\n\\tag{11.3}\n\\]. Problem: Exercise 0.949\n$x_1x_3 + 0.173x_1x_5$ \\\\\n$-0.716x_1x_2 - 1.578x_1x_4 + 1.132x_4x_2$ \\\\\n$-x_1x_5$ \\\\\n$x_1x_4$\n\\end{bmatrix}.\n\n\\[\nThe first three variables $x_1$, $x_2$, $x_3$, represent the rates of roll, pitch, and yaw, respectively, while $x_4$ is the incremental angle of attack and $x_5$ the sideslip angle. The last three variables $x_6$, $x_7$, $x_8$ are the controls; they represent the deflections of the elevator, aileron, and rudder, respectively.\n\nFor a given choice of the control variables $x_6$, $x_7$, $x_8$ we obtain a system of 5 equations and 5 unknowns. If we wish to study the behavior of the aircraft as the controls are changed, we need to solve a system of nonlinear equations with unknowns $x_1$, $x_2$, $\\ldots$, $x_5$ for each setting of the controls.\n\nDespite the many similarities between nonlinear equations and unconstrained and least-squares optimization algorithms, there are also some important differences. To obtain quadratic convergence in optimization we require second derivatives of the objective function, whereas knowledge of the first derivatives is sufficient in nonlinear equations.\n\n[Figure 11.1: The function $r(x)=\\sin(5x)-x$ has three roots.]\n\nQuasi-Newton methods are perhaps less useful in nonlinear equations than in optimization. In unconstrained optimization, the objective function is the natural choice of merit function that gauges progress towards the solution, but in nonlinear equations various merit functions can be used, all of which have some drawbacks. Line search and trust-region techniques play an equally important role in optimization, but one can argue that trust-region algorithms have certain theoretical advantages in solving nonlinear equations.\n\nSome of the difficulties that arise in trying to solve nonlinear equations can be illustrated by a simple scalar example $(n = 1)$. Suppose we have\n\\]\n\n\\[\nr(x) = \\sin(5x) - x,\n\\tag{11.3}\n\\]\n\nas plotted in Figure 11.1. From this figure we see that there are three solutions of the problem $r(x)=0$, also known as roots of $r$, located at zero and approximately $\\pm 0.519148$. This situation of multiple solutions is similar to optimization problems where, for example, a function may have more than one local minimum. It is not quite the same, however: In the case of optimization, one of the local minima may have a lower function value than the others (making it a ``better'' solution), while in nonlinear equations all solutions are equally good from a mathematical viewpoint. (If the modeler decides that the solution\n\nfound by the algorithm makes no sense on physical grounds, their model may need to be reformulated.)\n\nIn this chapter we start by outlining algorithms related to Newton's method and examining their local convergence properties. Besides Newton's method itself, these include Broyden's quasi-Newton method, inexact Newton methods, and tensor methods. We then address global convergence, which is the issue of trying to force convergence to a solution from a remote starting point. Finally, we discuss a class of methods in which an ``easy'' problem---one to which the solution is well known---is gradually transformed into the problem $F(x)=0$. In these so-called continuation (or homotopy) methods, we track the solution as the problem changes, with the aim of finishing up at a solution of $F(x)=0$.\n\nThroughout this chapter we make the assumption that the vector function $r$ is continuously differentiable in the region $\\mathcal{D}$ containing the values of $x$ we are interested in. In other words, the Jacobian $J(x)$ (the matrix of first partial derivatives of $r(x)$ defined in the Appendix and in (10.3)) exists and is continuous. We say that $x^*$ satisfying $r(x^*)=0$ is a degenerate solution if $J(x^*)$ is singular, and a nondegenerate solution otherwise.",
+    "dependency": {
+      "defined_tags": [
+        "11.3",
+        "11.35"
+      ],
+      "defined_tag_labels": [
+        "eq:11.3",
+        "eq:11.35"
+      ],
+      "body_refs": [
+        "11.35",
+        "11.3"
+      ],
+      "body_ref_labels": [
+        "eq:11.35",
+        "eq:11.3"
+      ],
+      "body_ref_targets": [
+        {
+          "tag": "11.35",
+          "label_key": "eq:11.35",
+          "display_tag": "(11.35)",
+          "kind": "equation",
+          "content": "quations, the merit function is obtained by combining the $n$ components of the vector $r$ in some way. The most widely used merit function is the sum of squares, defined by \\[ f(x)=\\frac{1}{2}\\|r(x)\\|^2=\\frac{1}{2}\\sum_{i=1}^n r_i^2(x). \\tag{11.35} \\] (The factor $1/2$ is introduced for convenience.) Any root $x^\\star$ of $r$ obviously has $f(x^\\star)=0$, and since $f(x)\\geq 0$ for all $x$, each root is a minimizer of $f$. However, local minimizers of $f$ are not roots of",
+          "equation_content": "\\[\nf(x)=\\frac{1}{2}\\|r(x)\\|^2=\\frac{1}{2}\\sum_{i=1}^n r_i^2(x).\n\\tag{11.35}\n\\]",
+          "equation_content_full": "\\[\nf(x)=\\frac{1}{2}\\|r(x)\\|^2=\\frac{1}{2}\\sum_{i=1}^n r_i^2(x).\n\\tag{11.35}\n\\]",
+          "position": 32937
+        },
+        {
+          "tag": "11.3",
+          "label_key": "eq:11.3",
+          "display_tag": "(11.3)",
+          "kind": "equation",
+          "content": "certain theoretical advantages in solving nonlinear equations. Some of the difficulties that arise in trying to solve nonlinear equations can be illustrated by a simple scalar example $(n = 1)$. Suppose we have \\] \\[ r(x) = \\sin(5x) - x, \\tag{11.3} \\] as plotted in Figure 11.1. From this figure we see that there are three solutions of the problem $r(x)=0$, also known as roots of $r$, located at zero and approximately $\\pm 0.519148$. This situation of multiple solutions is",
+          "equation_content": "\\[\nr(x) = \\sin(5x) - x,\n\\tag{11.3}\n\\]",
+          "equation_content_full": "\\[\nr(x) = \\sin(5x) - x,\n\\tag{11.3}\n\\]",
+          "position": 6249
+        }
+      ],
+      "body_ref_evidence": {
+        "11.35": "(11.35)",
+        "11.3": "(11.3)"
+      },
+      "unresolved_body_refs": [
+        "5x",
+        "10.3"
+      ],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  },
+  {
+    "index": 3,
+    "problem": "Exercise 11.1\nShow that for any vector $s \\in \\mathbf{R}^n$, we have\n\n\\[\n\\left\\| \\frac{ss^T}{s^T s} \\right\\| = 1,\n\\]\n\nwhere $\\|\\cdot\\|$ denotes the Euclidean matrix norm.",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "证明题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.1",
+    "problem_with_context": "Exercise 11.1\nShow that for any vector $s \\in \\mathbf{R}^n$, we have\n\n\\[\n\\left\\| \\frac{ss^T}{s^T s} \\right\\| = 1,\n\\]\n\nwhere $\\|\\cdot\\|$ denotes the Euclidean matrix norm.",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  },
+  {
+    "index": 4,
+    "problem": "Exercise 11.2\nConsider the function $r : \\mathbf{R} \\to \\mathbf{R}$ defined by $r(x)=x^q$, where $q$ is an integer greater than $2$. Note that $x^* = 0$ is the sole root of this function and that it is degenerate. Show that Newton's method converges Q-linearly, and find the value of the convergence ratio $r$ in (A.34).",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "求值题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.2",
+    "problem_with_context": "Exercise 11.2\nConsider the function $r : \\mathbf{R} \\to \\mathbf{R}$ defined by $r(x)=x^q$, where $q$ is an integer greater than $2$. Note that $x^* = 0$ is the sole root of this function and that it is degenerate. Show that Newton's method converges Q-linearly, and find the value of the convergence ratio $r$ in (A.34).",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  },
+  {
+    "index": 5,
+    "problem": "Exercise 11.3\nShow that Newton's method applied to the function $r(x) = -x^5 + x^3 + 4x$ starting from $x_0 = 1$ produces the cyclic behavior described in the text. Find the roots of this function, and check that they are nondegenerate.",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "求值题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.3",
+    "problem_with_context": "Exercise 11.3\nShow that Newton's method applied to the function $r(x) = -x^5 + x^3 + 4x$ starting from $x_0 = 1$ produces the cyclic behavior described in the text. Find the roots of this function, and check that they are nondegenerate.",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  },
+  {
+    "index": 6,
+    "problem": "Exercise 11.4\nFor the scalar function $r(x) = \\sin(5x) - x$, show that the sum-of-squares merit function has infinitely many local minima, and find a general formula for such points.",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "求值题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.4",
+    "problem_with_context": "Exercise 11.4\nFor the scalar function $r(x) = \\sin(5x) - x$, show that the sum-of-squares merit function has infinitely many local minima, and find a general formula for such points.",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [
+        "5x"
+      ],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  },
+  {
+    "index": 7,
+    "problem": "Exercise 11.5\nWhen $r : \\mathbf{R}^n \\to \\mathbf{R}^n$, show that the function\n\n\\[\n\\phi(\\lambda)=\\left\\|(J^T J+\\lambda I)^{-1}J^T r\\right\\|\n\\]\n\nis monotonically decreasing in $\\lambda$ unless $J^T r = 0$. (Hint: Use the singular-value decomposition of $J$.)",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "证明题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.5",
+    "problem_with_context": "Exercise 11.5\nWhen $r : \\mathbf{R}^n \\to \\mathbf{R}^n$, show that the function\n\n\\[\n\\phi(\\lambda)=\\left\\|(J^T J+\\lambda I)^{-1}J^T r\\right\\|\n\\]\n\nis monotonically decreasing in $\\lambda$ unless $J^T r = 0$. (Hint: Use the singular-value decomposition of $J$.)",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  },
+  {
+    "index": 8,
+    "problem": "Exercise 11.6\nProve part (iii) of Theorem 11.3.",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "证明题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.6",
+    "problem_with_context": "Exercise 11.6\nProve part (iii) of Theorem 11.3.\n\n[Theorem 11.3: \\begin{origintext} Theorem 11.3. Suppose that $r$ is continuously differentiable in a convex open set $D \\subseteq \\mathbf{R}^n$. Let $x^* \\in D$ be a nondegenerate solution of $r(x) = 0$, and let $\\{x_k\\}$ be the sequence of iterates generated by the Framework 11.2. Then when $x_k \\in D$ is sufficiently close to $x^*$, the following are true: (i) If $\\eta$ in (11.17) is sufficiently small, the convergence of $\\{x_k\\}$ to $x^*$ is Q-linear. (ii) If $\\eta_k \\to 0$, the convergence is Q-superlinear. (iii) If, in addition, $J(\\cdot)$ is Lipschitz continuous in a neighborhood of $x^*$ and $\\eta_k = O(\\|r_k\\|)$, the convergence is Q-quadratic. \\end{origintext}]\n\n[(11.17): \\[\n\\|r_k + J_k p_k\\| \\leq \\eta_k \\|r_k\\|, \\qquad \\text{for some } \\eta_k \\in [0,\\eta],\n\\tag{11.17}\n\\]]",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [
+        "theorem:11.3"
+      ],
+      "theorem_ref_labels": [
+        "thm:11.3"
+      ],
+      "theorem_ref_targets": [
+        {
+          "theorem": "11.3",
+          "label_key": "thm:11.3",
+          "display_ref": "Theorem 11.3",
+          "kind": "theorem",
+          "theorem_content": "\\begin{origintext} Theorem 11.3. Suppose that $r$ is continuously differentiable in a convex open set $D \\subseteq \\mathbf{R}^n$. Let $x^* \\in D$ be a nondegenerate solution of $r(x) = 0$, and let $\\{x_k\\}$ be the sequence of iterates generated by the Framework 11.2. Then when $x_k \\in D$ is sufficiently close to $x^*$, the following are true: (i) If $\\eta$ in (11.17) is sufficiently small, the convergence of $\\{x_k\\}$ to $x^*$ is Q-linear. (ii) If $\\eta_k \\to 0$, the convergence is Q-superlinear. (iii) If, in addition, $J(\\cdot)$ is Lipschitz continuous in a neighborhood of $x^*$ and $\\eta_k = O(\\|r_k\\|)$, the convergence is Q-quadratic. \\end{origintext}",
+          "content": "\\begin{origintext} Theorem 11.3. Suppose that $r$ is continuously differentiable in a convex open set $D \\subseteq \\mathbf{R}^n$. Let $x^* \\in D$ be a nondegenerate solution of $r(x) = 0$, and let $\\{x_k\\}$ be the sequence of iterates generated by the Framework 11.2. Then when $x_k \\in D$ is sufficiently close to $x^*$, the following are true: (i) If $\\eta$ in (11.17) is sufficiently small, the convergence of $\\{x_k\\}$ to $x^*$ is Q-linear. (ii) If $\\eta_k \\to 0$, the convergence is Q-superlinear. (iii) If, in addition, $J(\\cdot)$ is Lipschitz continuous in a neighborhood of $x^*$ and $\\eta_k = O(\\|r_k\\|)$, the convergence is Q-quadratic. \\end{origintext}"
+        }
+      ],
+      "theorem_ref_evidence": {
+        "theorem:11.3": "refs_attr"
+      },
+      "context_expansion_annotations": [
+        "Cyclic reference detected: Theorem 11.3 (in expansion of Theorem 11.3)",
+        "double reference + (11.17)"
+      ]
+    }
+  },
+  {
+    "index": 9,
+    "problem": "Exercise 11.7\nConsider a line-search Newton method in which the step length $\\alpha_k$ is chosen to be the exact minimizer of the merit function $f(\\cdot)$; that is,\n\n\\[\n\\alpha_k = \\arg\\min_\\alpha f(x_k - \\alpha J_k^{-1} r_k).\n\\]\n\nShow that if $J(x)$ is nonsingular at the solution $x^*$, then $\\alpha_k \\to 1$ as $x_k \\to x^*$.",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "证明题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.7",
+    "problem_with_context": "Exercise 11.7\nConsider a line-search Newton method in which the step length $\\alpha_k$ is chosen to be the exact minimizer of the merit function $f(\\cdot)$; that is,\n\n\\[\n\\alpha_k = \\arg\\min_\\alpha f(x_k - \\alpha J_k^{-1} r_k).\n\\]\n\nShow that if $J(x)$ is nonsingular at the solution $x^*$, then $\\alpha_k \\to 1$ as $x_k \\to x^*$.",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  },
+  {
+    "index": 10,
+    "problem": "Exercise 11.8\nLet $J \\in \\mathbf{R}^{n \\times m}$ and $r \\in \\mathbf{R}^n$ and suppose that $J J^T r = 0$. Show that $J^T r = 0$. (Hint: This doesn't even take one line!)",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "证明题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.8",
+    "problem_with_context": "Exercise 11.8\nLet $J \\in \\mathbf{R}^{n \\times m}$ and $r \\in \\mathbf{R}^n$ and suppose that $J J^T r = 0$. Show that $J^T r = 0$. (Hint: This doesn't even take one line!)",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  },
+  {
+    "index": 11,
+    "problem": "Exercise 11.9\nSuppose we replace the assumption of $x_k \\to x^*$ in Theorem 11.8 by an assumption that the nondegenerate solution $x^*$ is a limit point of $x^*$. By adding some logic to the proof of this result, show that in fact $x^*$ is the only possible limit point of the sequence. (Hint: Show that $\\|J_{k+1}^{-1} r_{k+1}\\| \\leq \\frac{1}{2}\\|J_k^{-1} r_k\\|$ for all $k$ sufficiently large, and hence that for any constant $\\epsilon > 0$, the sequence $\\{x_k\\}$ satisfies $\\|x_k - x^*\\| \\leq \\epsilon$ for all $k$ sufficiently large.)",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "证明题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.9",
+    "problem_with_context": "Exercise 11.9\nSuppose we replace the assumption of $x_k \\to x^*$ in Theorem 11.8 by an assumption that the nondegenerate solution $x^*$ is a limit point of $x^*$. By adding some logic to the proof of this result, show that in fact $x^*$ is the only possible limit point of the sequence. (Hint: Show that $\\|J_{k+1}^{-1} r_{k+1}\\| \\leq \\frac{1}{2}\\|J_k^{-1} r_k\\|$ for all $k$ sufficiently large, and hence that for any constant $\\epsilon > 0$, the sequence $\\{x_k\\}$ satisfies $\\|x_k - x^*\\| \\leq \\epsilon$ for all $k$ sufficiently large.)\n\n[Theorem 11.8: \\begin{origintext} Theorem 11.8. \\emph{Suppose that the sequence $\\{x_k\\}$ generated by Algorithm 11.5 converges to a nondegenerate solution $x^\\star$ of the problem $r(x)=0$. Suppose also that $J(x)$ is Lipschitz continuous in an open neighborhood $\\mathcal D$ of $x^\\star$ and that the trust-region subproblem (11.46) is solved exactly for all sufficiently large $k$. Then the sequence $\\{x_k\\}$ converges quadratically to $x^\\star$.} \\end{origintext}]\n\n[(11.46): \\[\n\\min_p \\ m_k(p), \\qquad \\text{subject to } \\|p\\| \\leq \\Delta_k,\n\\tag{11.46}\n\\]]\n\n[Algorithm 11.5: \\begin{origintext} Algorithm 11.5. (Trust-Region Method for Nonlinear Equations). Given $\\bar{\\Delta} > 0$, $\\Delta_0 \\in (0,\\bar{\\Delta})$, and $\\eta \\in [0,\\frac{1}{4})$: for $k = 0,1,2,\\ldots$ \\qquad Calculate $p_k$ as an (approximate) solution of (11.46); \\qquad Evaluate $\\rho_k$ from (11.47); \\qquad if $\\rho_k < \\frac{1}{4}$ \\qquad\\qquad $\\Delta_{k+1} = \\frac{1}{4}\\|p_k\\|;$ \\qquad else \\qquad\\qquad if $\\rho_k > \\frac{3}{4}$ and $\\|p_k\\| = \\Delta_k$ \\qquad\\qquad\\qquad $\\Delta_{k+1} = \\min(2\\Delta_k,\\bar{\\Delta});$ \\qquad\\qquad else \\qquad\\qquad\\qquad $\\Delta_{k+1} = \\Delta_k;$ \\qquad\\qquad end (if) \\qquad end (if) \\qquad if $\\rho_k > \\eta$ \\qquad\\qquad $x_{k+1} = x_k + p_k;$ \\qquad else \\qquad\\qquad $x_{k+1} = x_k;$ \\qquad end (if) end (for). \\end{origintext}]\n\n[(11.47): \\[\n\\rho_k =\n\\frac{\\|r(x_k)\\|^2 - \\|r(x_k + p_k)\\|^2}\n{\\|r(x_k)\\|^2 - \\|r(x_k) + J(x_k)p_k\\|^2}.\n\\tag{11.47}\n\\]]",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [
+        "theorem:11.8"
+      ],
+      "theorem_ref_labels": [
+        "thm:11.8"
+      ],
+      "theorem_ref_targets": [
+        {
+          "theorem": "11.8",
+          "label_key": "thm:11.8",
+          "display_ref": "Theorem 11.8",
+          "kind": "theorem",
+          "theorem_content": "\\begin{origintext} Theorem 11.8. \\emph{Suppose that the sequence $\\{x_k\\}$ generated by Algorithm 11.5 converges to a nondegenerate solution $x^\\star$ of the problem $r(x)=0$. Suppose also that $J(x)$ is Lipschitz continuous in an open neighborhood $\\mathcal D$ of $x^\\star$ and that the trust-region subproblem (11.46) is solved exactly for all sufficiently large $k$. Then the sequence $\\{x_k\\}$ converges quadratically to $x^\\star$.} \\end{origintext}",
+          "content": "\\begin{origintext} Theorem 11.8. \\emph{Suppose that the sequence $\\{x_k\\}$ generated by Algorithm 11.5 converges to a nondegenerate solution $x^\\star$ of the problem $r(x)=0$. Suppose also that $J(x)$ is Lipschitz continuous in an open neighborhood $\\mathcal D$ of $x^\\star$ and that the trust-region subproblem (11.46) is solved exactly for all sufficiently large $k$. Then the sequence $\\{x_k\\}$ converges quadratically to $x^\\star$.} \\end{origintext}"
+        }
+      ],
+      "theorem_ref_evidence": {
+        "theorem:11.8": "refs_attr"
+      },
+      "context_expansion_annotations": [
+        "Cyclic reference detected: Theorem 11.8 (in expansion of Theorem 11.8)",
+        "double reference + (11.46)",
+        "third reference + Algorithm 11.5",
+        "Cyclic reference detected: (11.46) (in expansion of Algorithm 11.5)",
+        "Cyclic reference detected: Algorithm 11.5 (in expansion of Algorithm 11.5)",
+        "fourth reference + (11.47)"
+      ]
+    }
+  },
+  {
+    "index": 12,
+    "problem": "Exercise 11.10\nConsider the following modification of our example of failure of continuation methods:\n\n\\[\nr(x) = x^2 - 1, \\qquad a = \\frac{1}{2}.\n\\]\n\nShow that for this example there is a zero path for $H(x,\\lambda)=\\lambda(x^2-1)+(1-\\lambda)(x-a)$ that connects $(\\frac{1}{2},0)$ to $(1,1)$, so that continuation methods should work for this choice of starting point.",
+    "proof": "",
+    "direct_answer": "",
+    "题目类型": [
+      "证明题"
+    ],
+    "预估难度": [],
+    "source": "book/Numerical_Optimization_Chapter_11",
+    "source_idx": "Exercise 11.10",
+    "problem_with_context": "Exercise 11.10\nConsider the following modification of our example of failure of continuation methods:\n\n\\[\nr(x) = x^2 - 1, \\qquad a = \\frac{1}{2}.\n\\]\n\nShow that for this example there is a zero path for $H(x,\\lambda)=\\lambda(x^2-1)+(1-\\lambda)(x-a)$ that connects $(\\frac{1}{2},0)$ to $(1,1)$, so that continuation methods should work for this choice of starting point.",
+    "dependency": {
+      "defined_tags": [],
+      "defined_tag_labels": [],
+      "body_refs": [],
+      "body_ref_labels": [],
+      "body_ref_targets": [],
+      "body_ref_evidence": {},
+      "unresolved_body_refs": [],
+      "theorem_refs": [],
+      "theorem_ref_labels": [],
+      "theorem_ref_targets": [],
+      "theorem_ref_evidence": {}
+    }
+  }
+]
