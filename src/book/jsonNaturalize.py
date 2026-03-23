@@ -23,7 +23,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from openai import OpenAI
 from tqdm import tqdm
@@ -323,6 +323,237 @@ def _dedupe_keep_order(items: List[str]) -> List[str]:
         seen.add(k)
         out.append(k)
     return out
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Recursive tag-reference resolution
+# ──────────────────────────────────────────────────────────────────────
+
+# Equation reference: (18.50), (11.46a), (2.3.1b)
+# Require at least one dot to avoid matching plain parenthesised integers.
+_TAG_EQ_DETECT_RE = re.compile(r"\((\d+\.\d+(?:\.\d+)*(?:[A-Za-z])?)\)")
+
+# Theorem / lemma / algorithm / etc.
+_TAG_THM_DETECT_RE = re.compile(
+    r"(?i)\b(Theorem|Thm\.?|Lemma|Lem\.?|Algorithm|Alg\.?"
+    r"|Proposition|Prop\.?|Corollary|Cor\.?|Definition|Defn\.?)"
+    r"\s+(\d+(?:\.\d+)*)\b"
+)
+
+
+def _ref_kind_short(kind: str) -> str:
+    """Normalize a theorem-like reference kind to its short canonical form."""
+    t = (kind or "").strip().lower().rstrip(".")
+    _MAP = {
+        "theorem": "thm", "thm": "thm",
+        "lemma": "lem", "lem": "lem",
+        "algorithm": "alg", "alg": "alg",
+        "proposition": "prop", "prop": "prop",
+        "corollary": "cor", "cor": "cor",
+        "definition": "defn", "defn": "defn",
+    }
+    return _MAP.get(t, "thm")
+
+
+def detect_tags_in_text(text: str) -> List[Tuple[str, str, int, int]]:
+    """Detect tag references in *text*.
+
+    Returns a list of ``(tag_key, match_text, start, end)`` tuples sorted by
+    position.  ``tag_key`` uses the ``"eq:18.50"`` / ``"thm:11.8"`` format
+    produced by :func:`build_tag_content_map`.
+    """
+    results: List[Tuple[str, str, int, int]] = []
+    occupied: List[Tuple[int, int]] = []
+
+    # 1) Theorem-like references first (higher specificity).
+    for m in _TAG_THM_DETECT_RE.finditer(text or ""):
+        kind = _ref_kind_short(m.group(1))
+        num = (m.group(2) or "").strip()
+        key = f"{kind}:{num}"
+        results.append((key, m.group(0), m.start(), m.end()))
+        occupied.append((m.start(), m.end()))
+
+    # 2) Equation references — skip spans already claimed by a theorem match.
+    for m in _TAG_EQ_DETECT_RE.finditer(text or ""):
+        s, e = m.start(), m.end()
+        if any(os <= s and e <= oe for os, oe in occupied):
+            continue
+        tag = (m.group(1) or "").strip()
+        key = f"eq:{tag}"
+        results.append((key, m.group(0), s, e))
+
+    results.sort(key=lambda t: t[2])
+    return results
+
+
+def build_tag_content_map(record: Dict[str, Any]) -> Dict[str, str]:
+    """Build a ``tag_key -> content`` map from a record's dependency targets.
+
+    Keys follow the ``"eq:<num>"`` / ``"thm:<num>"`` / ``"lem:<num>"`` format
+    so they match what :func:`detect_tags_in_text` produces.
+    """
+    tag_map: Dict[str, str] = {}
+    dep = record.get("dependency")
+    dep_obj = dep if isinstance(dep, dict) else {}
+
+    # --- equation targets ---
+    eq_targets = record.get("body_ref_targets")
+    if not isinstance(eq_targets, list):
+        eq_targets = dep_obj.get("body_ref_targets")
+    for t in (eq_targets or []):
+        if not isinstance(t, dict):
+            continue
+        tag = str(t.get("tag") or "").strip()
+        eq_content = str(t.get("equation_content") or "").strip()
+        if tag and eq_content:
+            tag_map[f"eq:{tag}"] = eq_content
+
+    # --- theorem / lemma / algorithm targets ---
+    thm_targets = record.get("theorem_ref_targets")
+    if not isinstance(thm_targets, list):
+        thm_targets = dep_obj.get("theorem_ref_targets")
+    for t in (thm_targets or []):
+        if not isinstance(t, dict):
+            continue
+        label_key = str(t.get("label_key") or "").strip()
+        content = str(t.get("theorem_content") or t.get("content") or "").strip()
+        if label_key and content:
+            tag_map[label_key] = content
+
+    return tag_map
+
+
+def expand_tags_single_pass(
+    text: str,
+    tag_map: Dict[str, str],
+    expanding_chain: Set[str],
+) -> Tuple[str, List[str], List[str]]:
+    """Replace every resolvable tag in *text* with its content (one pass).
+
+    Tags whose ``tag_key`` is already in *expanding_chain* are treated as
+    circular references and left untouched.
+
+    Returns ``(new_text, expanded_keys, circular_keys)``.
+
+    Strategy: all resolvable, non-circular tags are expanded in a single pass
+    (processed right-to-left to keep positions stable).  A single LLM rewrite
+    after the pass is cheaper and lets the model see the full merged context.
+    """
+    hits = detect_tags_in_text(text)
+    if not hits:
+        return text, [], []
+
+    expanded: List[str] = []
+    circular: List[str] = []
+
+    for tag_key, _match_text, start, end in reversed(hits):
+        content = tag_map.get(tag_key, "").strip()
+        if not content:
+            continue
+        if tag_key in expanding_chain:
+            circular.append(tag_key)
+            continue
+        text = text[:start] + content + text[end:]
+        expanded.append(tag_key)
+
+    return text, expanded, circular
+
+
+def _make_tag_smooth_prompt(text: str) -> str:
+    """Prompt for the LLM to smooth text after inline tag expansion."""
+    return (
+        "The following mathematical problem text has had referenced formulas "
+        "and/or theorems substituted inline to replace their citation markers. "
+        "Rewrite it so the inlined content reads naturally and coherently.\n\n"
+        "Hard constraints:\n"
+        "- Do NOT solve the problem.\n"
+        "- Do NOT add assumptions, definitions, domains, or new symbols.\n"
+        "- Do NOT change the mathematical meaning, task type, or quantifiers.\n"
+        "- Preserve every formula, constraint, and variable exactly.\n"
+        "- Use standard LaTeX math notation only; no Unicode math symbols.\n"
+        "- Return ONLY the rewritten problem text (plain text, no JSON, "
+        "no markdown fences, no explanation).\n\n"
+        "Text:\n" + text
+    )
+
+
+def resolve_tags_recursive(
+    text: str,
+    tag_map: Dict[str, str],
+    *,
+    rewrite_fn: Optional[Callable[[str], str]] = None,
+    expanding_chain: Optional[Set[str]] = None,
+    max_depth: int = 10,
+    _depth: int = 0,
+) -> Tuple[str, str]:
+    """Recursively resolve tag references in *text*.
+
+    Workflow per recursion level:
+
+    1. Detect resolvable tags in the current text.
+    2. If none -> return immediately (base case).
+    3. Expand all resolvable tags in one pass (skip circular ones).
+    4. Call *rewrite_fn* to semantically smooth the merged text.
+    5. Recurse to handle any newly-introduced tags.
+
+    **Circular-reference handling:** every tag expanded on the current path is
+    recorded in *expanding_chain*.  If the same ``tag_key`` appears again
+    deeper in the recursion, it is recognised as circular and silently skipped
+    (the original citation marker is kept).  This covers A->B->A, A->B->C->A,
+    and any longer cycles.
+
+    **Multi-tag strategy:** all non-circular tags in a single text are expanded
+    together in one pass, followed by one LLM rewrite.  This is more efficient
+    (fewer LLM calls) and gives the model full context for smoothing.
+
+    Returns ``(final_text, status)`` where *status* is one of:
+
+    * ``"no_tags"``      - no resolvable tags found (base case)
+    * ``"ok"``           - at least one expansion + smoothing completed
+    * ``"max_depth"``    - recursion limit reached
+    * ``"all_circular"`` - every resolvable tag is a circular reference
+    """
+    if expanding_chain is None:
+        expanding_chain = set()
+
+    # --- base: nothing to expand ---
+    hits = detect_tags_in_text(text)
+    resolvable = [h for h in hits if h[0] in tag_map]
+    if not resolvable:
+        return text, "no_tags"
+
+    # --- guard: depth limit ---
+    if _depth >= max_depth:
+        return text, "max_depth"
+
+    # --- expand one pass ---
+    new_text, expanded, circular = expand_tags_single_pass(
+        text, tag_map, expanding_chain,
+    )
+    if not expanded:
+        return text, "all_circular"
+
+    # --- LLM smoothing ---
+    if rewrite_fn is not None:
+        try:
+            smoothed = rewrite_fn(new_text)
+            if isinstance(smoothed, str) and smoothed.strip():
+                new_text = smoothed.strip()
+        except Exception:
+            pass  # keep un-smoothed text on failure
+
+    # --- recurse with updated chain ---
+    new_chain = expanding_chain | set(expanded)
+    result_text, child_status = resolve_tags_recursive(
+        new_text,
+        tag_map,
+        rewrite_fn=rewrite_fn,
+        expanding_chain=new_chain,
+        max_depth=max_depth,
+        _depth=_depth + 1,
+    )
+    return result_text, "ok"
+
 
 def build_naturalize_input(record: Dict[str, Any]) -> Dict[str, Any]:
     dep = record.get("dependency")
@@ -930,6 +1161,8 @@ def naturalize_one(
     final_max_tokens: int,
     final_llm_retries: int,
     reuse_existing_standardized: bool,
+    enable_tag_resolution: bool = True,
+    tag_max_depth: int = 10,
     progress_prefix: str = "",
 ) -> Dict[str, Any]:
     out = dict(record)
@@ -984,6 +1217,39 @@ def naturalize_one(
         return _finalize_out_fields(out)
 
     payload = build_naturalize_input(record)
+
+    # --- Recursive tag resolution (pre-expand before standardisation) ---
+    if enable_tag_resolution:
+        _tag_map = build_tag_content_map(record)
+        if _tag_map:
+            _tag_rewrite_fn: Optional[Callable[[str], str]] = None
+            if use_llm and client is not None:
+                def _tag_rewrite(t: str) -> str:
+                    return _call_cached(
+                        client,
+                        model=model,
+                        prompt=_make_tag_smooth_prompt(t),
+                        max_tokens=max_tokens,
+                        cache_dir=cache_dir,
+                        cache_enabled=cache_enabled,
+                    )
+                _tag_rewrite_fn = _tag_rewrite
+
+            resolved, _res_status = resolve_tags_recursive(
+                payload["original_problem"],
+                _tag_map,
+                rewrite_fn=_tag_rewrite_fn,
+                max_depth=tag_max_depth,
+            )
+            if resolved and resolved.strip():
+                payload["original_problem"] = _normalize_tex_math_text(resolved)
+                if progress_prefix:
+                    print(
+                        f"{progress_prefix} tag resolution {_res_status} "
+                        f"(depth<={tag_max_depth})",
+                        file=sys.stderr,
+                    )
+
     prompt = make_prompt(payload)
 
     try:
@@ -1119,6 +1385,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Keep naturalize cache directory after run",
     )
+    ap.add_argument(
+        "--disable-tag-resolution",
+        action="store_true",
+        help="Disable recursive tag-reference resolution before standardisation",
+    )
+    ap.add_argument(
+        "--tag-max-depth",
+        type=int,
+        default=10,
+        help="Maximum recursion depth for tag resolution (default: 10)",
+    )
     return ap.parse_args()
 
 
@@ -1251,6 +1528,8 @@ def main() -> None:
             final_max_tokens=max(200, int(args.final_max_tokens)),
             final_llm_retries=max(1, int(args.final_llm_retries)),
             reuse_existing_standardized=bool(has_prev and not args.force),
+            enable_tag_resolution=not bool(args.disable_tag_resolution),
+            tag_max_depth=max(1, int(args.tag_max_depth)),
             progress_prefix=progress_prefix,
         )
         out_rows.append(new_row)
