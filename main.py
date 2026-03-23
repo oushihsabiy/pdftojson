@@ -62,6 +62,9 @@ NATURALIZE_NO_CACHE: bool
 NATURALIZE_DISABLE_LLM: bool
 NATURALIZE_FORCE: bool
 NATURALIZE_CLEAN_CACHE_ON_EXIT: bool
+TEX_RECURSIVE_CONTEXT: bool
+TEX_RECURSIVE_MAX_DEPTH: int
+TEX_RECURSIVE_MAX_TOKENS: int
 
 
 def find_settings_json() -> Path:
@@ -497,6 +500,10 @@ def process_one(
         cmd3 += ["--require-clean"]
     if TEX_FINAL_JSON_ONLY:
         cmd3 += ["--final-json-only"]
+    if TEX_RECURSIVE_CONTEXT:
+        cmd3 += ["--recursive-context"]
+    cmd3 += ["--recursive-max-depth", str(int(TEX_RECURSIVE_MAX_DEPTH))]
+    cmd3 += ["--recursive-max-tokens", str(int(TEX_RECURSIVE_MAX_TOKENS))]
 
     if ATOMIC_OUTPUTS:
         run_stage_atomic(
@@ -567,6 +574,7 @@ def main() -> None:
     global NATURALIZE_MODEL, NATURALIZE_MAX_TOKENS, NATURALIZE_MAX_ITEMS
     global NATURALIZE_PROMPT_VERSION, NATURALIZE_CACHE_DIR
     global NATURALIZE_NO_CACHE, NATURALIZE_DISABLE_LLM, NATURALIZE_FORCE, NATURALIZE_CLEAN_CACHE_ON_EXIT
+    global TEX_RECURSIVE_CONTEXT, TEX_RECURSIVE_MAX_DEPTH, TEX_RECURSIVE_MAX_TOKENS
 
     settings = load_settings()
     INPUT_PDF_DIR = PROJECT_ROOT / str(get_setting(settings, "INPUT_PDF_DIR", "input_pdfs"))
@@ -617,6 +625,9 @@ def main() -> None:
     NATURALIZE_DISABLE_LLM = bool(get_setting(settings, "NATURALIZE_DISABLE_LLM", False))
     NATURALIZE_FORCE = bool(get_setting(settings, "NATURALIZE_FORCE", False))
     NATURALIZE_CLEAN_CACHE_ON_EXIT = bool(get_setting(settings, "NATURALIZE_CLEAN_CACHE_ON_EXIT", True))
+    TEX_RECURSIVE_CONTEXT = bool(get_setting(settings, "TEX_RECURSIVE_CONTEXT", False))
+    TEX_RECURSIVE_MAX_DEPTH = int(get_setting(settings, "TEX_RECURSIVE_MAX_DEPTH", 5))
+    TEX_RECURSIVE_MAX_TOKENS = int(get_setting(settings, "TEX_RECURSIVE_MAX_TOKENS", 2048))
 
     args = parse_args()
     mode = args.mode

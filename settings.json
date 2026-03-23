@@ -3,6 +3,8 @@
   "OUTPUT_JSON_DIR": "output_json",
   "WORK_DIR": "work",
   "PIPELINE_MODE": "book",
+  "ENABLE_NATURALIZE": true,
+  "OUTPUT_JSON_NATURALIZED_DIR": "output_json_naturalized",
   "RAWJSON_SRC_DIR": "src/exercise/rawjson",
   "OCR_MAX_TOKENS": null,
   "ONLY_THESE_STEMS": [],
@@ -11,5 +13,8 @@
   "THINK_WORKERS": 4,
   "STRICT_RESUME": true,
   "ATOMIC_OUTPUTS": true,
-  "CLEAN_STALE_TMPS": true
+  "CLEAN_STALE_TMPS": true,
+  "TEX_RECURSIVE_CONTEXT": true,
+  "TEX_RECURSIVE_MAX_DEPTH": 5,
+  "TEX_RECURSIVE_MAX_TOKENS": 2048
 }

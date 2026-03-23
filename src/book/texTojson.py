@@ -81,6 +81,18 @@ THEOREM_LABEL_RE = re.compile(r"(?i)\b(?P<kind>Theorem|Thm\.?|Lemma|Lem\.?|Algor
 
 _RETRYABLE_OPENAI_ERRORS = {"RateLimitError", "APITimeoutError", "APIError"}
 
+# Equation-reference pattern for re-scanning after insertion.
+# Matches (11.1), (11.3a), Equation (11.5), Theorem 11.1, Lemma 11.2, etc.
+_TAG_REF_SCAN_RE = re.compile(
+    r"(?i)"
+    r"(?:(?:Eq\.|Eqs\.|Equation|Equations|problem|constraint|update|formula|model)\s*)?"
+    r"\(\s*(\d+(?:\.\d+)*(?:[A-Za-z])?)\s*\)"
+)
+_THM_REF_SCAN_RE = re.compile(
+    r"(?i)\b(?:Theorem|Thm\.?|Lemma|Lem\.?|Algorithm|Alg\.?|Proposition|Prop\.?|Corollary|Cor\.?|Definition|Defn\.?)"
+    r"\s+(\d+(?:\.\d+)*)\b"
+)
+
 # Type signal patterns used by rule classifier and conflict routing.
 VALUE_TYPE_PATTERNS = [
     r"\bwhat is\b",
@@ -882,6 +894,390 @@ def compose_problem_with_context(
     if not chunks:
         return p
     return (" ".join(chunks) + " Problem: " + p).strip()
+
+
+# ---------------------------------------------------------------------------
+# Config helpers (shared with jsonNaturalize.py pattern)
+# ---------------------------------------------------------------------------
+
+def _find_config_json() -> Path:
+    p = Path.cwd() / "config.json"
+    if p.exists():
+        return p.resolve()
+    here = Path(__file__).resolve().parent
+    for d in [here] + list(here.parents):
+        q = d / "config.json"
+        if q.exists():
+            return q.resolve()
+    raise FileNotFoundError("config.json not found (checked CWD and script parents).")
+
+
+def _load_config() -> Dict[str, Any]:
+    cfg_path = _find_config_json()
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{cfg_path} must contain a JSON object.")
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Recursive tag-context expansion
+# ---------------------------------------------------------------------------
+
+_DEPTH_LABELS = {
+    1: "double",
+    2: "third",
+    3: "fourth",
+    4: "fifth",
+    5: "sixth",
+    6: "seventh",
+    7: "eighth",
+}
+
+
+def _depth_label(depth: int) -> str:
+    """Return human-readable depth label for nested reference annotation."""
+    return _DEPTH_LABELS.get(depth, f"level-{depth + 1}")
+
+
+def find_tags_in_text(
+    text: str,
+    tag_index: Dict[str, Dict[str, Any]],
+    theorem_index: Dict[str, Dict[str, Any]],
+) -> List[Tuple[str, str]]:
+    """
+    Find all tag/theorem references in *text* that can be resolved.
+
+    Returns a deduplicated list of ``(key, kind)`` tuples where *kind* is
+    ``"equation"`` or ``"theorem"`` and *key* is the lookup key into
+    *tag_index* / *theorem_index* respectively.
+    """
+    seen: Set[str] = set()
+    result: List[Tuple[str, str]] = []
+
+    # Equation-style refs: (11.1), Equation (11.3), etc.
+    for m in _TAG_REF_SCAN_RE.finditer(text or ""):
+        tag = _normalize_tag_token(m.group(1) or "")
+        if tag and tag not in seen and tag in tag_index:
+            seen.add(tag)
+            result.append((tag, "equation"))
+
+    # Theorem-style refs: Theorem 11.1, Lemma 11.2, etc.
+    for m in _THM_REF_SCAN_RE.finditer(text or ""):
+        num = (m.group(1) or "").strip()
+        kind_raw = (m.group(0) or "").split()[0]
+        kind = _normalize_statement_kind(kind_raw)
+        key = f"{kind}:{num}"
+        if key not in seen and key in theorem_index:
+            seen.add(key)
+            result.append((key, "theorem"))
+
+    return result
+
+
+def resolve_tag_content(
+    key: str,
+    kind: str,
+    tag_index: Dict[str, Dict[str, Any]],
+    theorem_index: Dict[str, Dict[str, Any]],
+) -> Tuple[str, str]:
+    """
+    Retrieve the display label and textual content for a tag.
+
+    Returns ``(display_label, content_text)``.
+    """
+    if kind == "equation":
+        entry = tag_index.get(key)
+        if entry:
+            content = (entry.get("equation_content") or entry.get("content") or "").strip()
+            display = (entry.get("display_tag") or f"({key})").strip()
+            return display, content
+    elif kind == "theorem":
+        entry = theorem_index.get(key)
+        if entry:
+            content = (entry.get("theorem_content") or entry.get("content") or "").strip()
+            display = (entry.get("display_ref") or key).strip()
+            return display, content
+    return key, ""
+
+
+def smooth_text_with_llm(
+    text: str,
+    tag_display: str,
+    tag_content: str,
+    *,
+    client: object,
+    model: str,
+    max_tokens: int = 2048,
+    cache_dir: Optional[Path] = None,
+    cache_enabled: bool = True,
+) -> str:
+    """
+    Call LLM to merge referenced content into the problem text so the result
+    reads naturally while preserving all mathematical meaning.
+    """
+    prompt = (
+        "You are editing a mathematical exercise to make it self-contained.\n"
+        "The problem text references " + tag_display + ". "
+        "The referenced content is provided below.\n\n"
+        "Task:\n"
+        "1. Insert the referenced content into the problem at the location of "
+        "the reference so that the text is self-contained.\n"
+        "2. Keep the reference label " + tag_display + " visible in the text "
+        "for traceability.\n"
+        "3. The merged text must read naturally, smoothly, and coherently.\n"
+        "4. Do NOT change mathematical logic, notation, assumptions, or "
+        "question intent.\n"
+        "5. Do NOT add new mathematical facts not present in the original "
+        "problem or the referenced content.\n"
+        "6. Do NOT delete any important content from either the problem or "
+        "the referenced content.\n"
+        "7. Output ONLY the rewritten problem text. No explanations.\n\n"
+        "--- Original problem ---\n"
+        + text + "\n\n"
+        "--- Referenced content for " + tag_display + " ---\n"
+        + tag_content + "\n\n"
+        "--- Rewritten problem (output only this) ---"
+    )
+    try:
+        raw = llm_call_cached(
+            client, model, prompt,
+            max_tokens=max_tokens,
+            cache_dir=cache_dir,
+            cache_enabled=cache_enabled,
+        )
+    except Exception:
+        # Fallback: simple concatenation if LLM is unavailable
+        return f"{text}\n\n[{tag_display}: {tag_content}]"
+
+    out = (raw or "").strip()
+    # Strip markdown fences that some models emit.
+    out = re.sub(r"^```(?:text|latex|json)?\s*", "", out, flags=re.IGNORECASE).strip()
+    out = re.sub(r"\s*```$", "", out).strip()
+    return out if out else text
+
+
+def expand_problem_recursively(
+    text: str,
+    tag_index: Dict[str, Dict[str, Any]],
+    theorem_index: Dict[str, Dict[str, Any]],
+    *,
+    depth: int = 0,
+    visited_path: Optional[Set[str]] = None,
+    max_depth: int = 5,
+    annotations: Optional[List[str]] = None,
+    client: Optional[object] = None,
+    model: str = "",
+    max_tokens: int = 2048,
+    cache_dir: Optional[Path] = None,
+    cache_enabled: bool = True,
+) -> Tuple[str, List[str]]:
+    """
+    Recursively resolve tags inside *text*.
+
+    Parameters
+    ----------
+    text : str
+        Current (possibly partially resolved) problem text.
+    tag_index : dict
+        Equation-tag index built from the document.
+    theorem_index : dict
+        Theorem/lemma index built from the document.
+    depth : int
+        Current recursion depth (0 = direct references from original problem).
+    visited_path : set
+        Tags already resolved in this call chain (cycle detection).
+    max_depth : int
+        Hard cap on recursion depth.
+    annotations : list
+        Accumulated depth annotations (mutated in-place).
+    client : OpenAI client or None
+        If None, LLM smoothing is skipped and simple insertion is used.
+    model : str
+        LLM model name.
+
+    Returns
+    -------
+    (resolved_text, annotations)
+    """
+    if visited_path is None:
+        visited_path = set()
+    if annotations is None:
+        annotations = []
+
+    if depth > max_depth:
+        annotations.append(f"Max recursion depth ({max_depth}) reached; stopping expansion.")
+        return text, annotations
+
+    # Find all resolvable tags in the current text.
+    tags = find_tags_in_text(text, tag_index, theorem_index)
+    resolvable = [(k, kind) for k, kind in tags if k not in visited_path]
+
+    if not resolvable:
+        return text, annotations
+
+    for tag_key, tag_kind in resolvable:
+        # Skip already-resolved tags (visited_path grows as siblings are processed).
+        if tag_key in visited_path:
+            continue
+
+        display, content = resolve_tag_content(tag_key, tag_kind, tag_index, theorem_index)
+        if not content:
+            visited_path.add(tag_key)
+            continue
+
+        visited_path.add(tag_key)
+
+        # Depth annotation for nested references (depth >= 1).
+        if depth >= 1:
+            annotations.append(f"{_depth_label(depth)} reference + {display}")
+
+        # Insert content and smooth.
+        if client and model:
+            text = smooth_text_with_llm(
+                text, display, content,
+                client=client,
+                model=model,
+                max_tokens=max_tokens,
+                cache_dir=cache_dir,
+                cache_enabled=cache_enabled,
+            )
+        else:
+            # Deterministic fallback: append reference block.
+            text = f"{text}\n\n[{display}: {content}]"
+
+        # After insertion, re-scan the entire updated text for new tags
+        # introduced by the inserted content.
+        new_tags = find_tags_in_text(text, tag_index, theorem_index)
+        new_unresolved = [(k, kind) for k, kind in new_tags if k not in visited_path]
+
+        # Detect cycles: check if the *inserted content* itself references
+        # tags already on the visited path (genuine back-references).
+        content_tags = find_tags_in_text(content, tag_index, theorem_index)
+        for ck, ckind in content_tags:
+            if ck in visited_path:
+                c_display, _ = resolve_tag_content(ck, ckind, tag_index, theorem_index)
+                annotations.append(f"Cyclic reference detected: {c_display} (in expansion of {display})")
+
+        if new_unresolved and depth < max_depth:
+            text, annotations = expand_problem_recursively(
+                text, tag_index, theorem_index,
+                depth=depth + 1,
+                visited_path=visited_path,
+                max_depth=max_depth,
+                annotations=annotations,
+                client=client,
+                model=model,
+                max_tokens=max_tokens,
+                cache_dir=cache_dir,
+                cache_enabled=cache_enabled,
+            )
+
+    # After resolving all tags at this depth, do one final re-scan
+    # to catch any remaining tags (e.g. from multiple insertions).
+    final_tags = find_tags_in_text(text, tag_index, theorem_index)
+    final_unresolved = [(k, kind) for k, kind in final_tags if k not in visited_path]
+    if final_unresolved and depth < max_depth:
+        text, annotations = expand_problem_recursively(
+            text, tag_index, theorem_index,
+            depth=depth + 1,
+            visited_path=visited_path,
+            max_depth=max_depth,
+            annotations=annotations,
+            client=client,
+            model=model,
+            max_tokens=max_tokens,
+            cache_dir=cache_dir,
+            cache_enabled=cache_enabled,
+        )
+
+    return text, annotations
+
+
+def apply_recursive_context_expansion(
+    rows: List[Dict],
+    *,
+    tex: str,
+    md_text: str = "",
+    enable: bool = False,
+    model: str = "",
+    max_depth: int = 5,
+    max_tokens: int = 2048,
+    cache_dir: Optional[Path] = None,
+    cache_enabled: bool = True,
+) -> List[Dict]:
+    """
+    Post-processing pass: for every row, recursively expand tag references
+    in the *problem* field and write the result to *problem_with_context*.
+    """
+    if not enable:
+        return rows
+
+    # Build indexes from the whole document.
+    doc_tag_index = build_doc_tag_index(tex)
+    md_tag_index = build_md_tag_fallback_index(md_text)
+    all_tag_index: Dict[str, Dict[str, Any]] = dict(doc_tag_index)
+    for k, v in md_tag_index.items():
+        all_tag_index.setdefault(k, v)
+    doc_theorem_index = build_doc_theorem_index(tex)
+
+    # Create LLM client from config.json.
+    client = None
+    try:
+        cfg = _load_config()
+        api_key = str(cfg.get("api_key") or os.getenv("OPENAI_API_KEY") or "").strip()
+        base_url = str(cfg.get("base_url") or "").strip()
+        if not model:
+            model = str(cfg.get("model") or "gpt-5-mini").strip()
+        if api_key:
+            from openai import OpenAI  # type: ignore
+            if base_url:
+                client = OpenAI(api_key=api_key, base_url=base_url, timeout=180)
+            else:
+                client = OpenAI(api_key=api_key, timeout=180)
+    except Exception:
+        pass
+
+    out_rows: List[Dict] = []
+    for row in rows:
+        problem = str(row.get("problem") or "").strip()
+        if not problem:
+            out_rows.append(row)
+            continue
+
+        # Check if there are any resolvable tags in this problem.
+        tags = find_tags_in_text(problem, all_tag_index, doc_theorem_index)
+        if not tags:
+            out_rows.append(row)
+            continue
+
+        resolved_text, annotations = expand_problem_recursively(
+            problem,
+            all_tag_index,
+            doc_theorem_index,
+            depth=0,
+            visited_path=set(),
+            max_depth=max_depth,
+            annotations=[],
+            client=client,
+            model=model,
+            max_tokens=max_tokens,
+            cache_dir=cache_dir,
+            cache_enabled=cache_enabled,
+        )
+
+        upd = dict(row)
+        upd["problem_with_context"] = resolved_text
+
+        # Store annotations (cycle reports, depth labels) as structured metadata.
+        if annotations:
+            dep = dict(upd.get("dependency") or {})
+            dep["context_expansion_annotations"] = annotations
+            upd["dependency"] = dep
+
+        out_rows.append(upd)
+
+    return out_rows
 
 
 def _normalize_problem_text(problem_text: str) -> str:
@@ -2264,6 +2660,23 @@ def main() -> None:
         action="store_true",
         help="Strict final mode: LLM self-check + require clean + print only final JSON to stdout",
     )
+    ap.add_argument(
+        "--recursive-context",
+        action="store_true",
+        help="Enable recursive tag-context expansion for problem_with_context",
+    )
+    ap.add_argument(
+        "--recursive-max-depth",
+        type=int,
+        default=5,
+        help="Max recursion depth for tag expansion (default: 5)",
+    )
+    ap.add_argument(
+        "--recursive-max-tokens",
+        type=int,
+        default=2048,
+        help="Max tokens for LLM smoothing in recursive expansion",
+    )
     args = ap.parse_args()
 
     if args.final_json_only:
@@ -2311,6 +2724,19 @@ def main() -> None:
     )
     if type_meta:
         warns = list(warns) + list(type_meta)
+
+    # Recursive tag-context expansion pass.
+    rows = apply_recursive_context_expansion(
+        rows,
+        tex=tex,
+        md_text=md_text,
+        enable=bool(args.recursive_context),
+        model=str(args.llm_model),
+        max_depth=max(1, int(args.recursive_max_depth)),
+        max_tokens=max(256, int(args.recursive_max_tokens)),
+        cache_dir=(Path(args.llm_cache_dir).expanduser().resolve() if args.llm_cache_dir else None),
+        cache_enabled=not bool(args.llm_no_cache),
+    )
 
     rows = _compact_dependency_fields(rows)
     out_json.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
