@@ -38,8 +38,11 @@ Priority of information:
 
 When integrating references:
 - Incorporate all clearly relevant referenced conditions/formulas into the standardized statement.
-- Avoid leaving bare citation markers (e.g., "(11.35)") as substitutes for mathematical content when the actual content is available.
-- Prefer explicit mathematical statements over metareferences to numbered items.
+- COMPLETELY ELIMINATE all citation markers, equation numbers, and reference pointers from the output.
+  Examples of forbidden residuals: "(11.35)", "Theorem 11.8", "Algorithm 11.5", "Eq. (3)", "equation (2.4)", "see (11.3)", "by Lemma 2.1", "from (A)", etc.
+- Replace every such pointer with the actual mathematical content it refers to. If the content is available in the input, inline it explicitly.
+- If a pointer's content is completely unavailable in the input, describe it in plain mathematical terms based on context, but never leave a bare numbered reference.
+- After integration, the output must contain zero equation numbers, theorem numbers, algorithm numbers, or any other numbered citation labels.
 
 --------------------------------
 [Condition Completion Rules]
@@ -97,6 +100,8 @@ Add a condition only if: (1) is No, (2) is No, and (3) is Yes.
   Use \le, \ge, \ne, \in, \subseteq, \to, \times, \cdot, \nabla, \mathbf{R}, \mathbf{N}, \mathbf{Z}.
 - Keep formulas compilable and avoid malformed delimiters.
 - Keep semantic equivalence exactly: do not strengthen/weaken assumptions, claims, or quantifier scope beyond the condition completion described above.
+- **ZERO REFERENCES IN OUTPUT**: The final output MUST NOT contain any equation reference numbers (e.g., (11.35)), theorem/lemma/algorithm labels (e.g., Theorem 11.8, Algorithm 11.5), or any pointer of the form "(X.Y)", "Eq. (N)", "see (N)", "by Theorem N", etc. Every such pointer must be fully resolved into its mathematical content.
+- **SEMANTIC FLUENCY**: The output must read as a single, coherent, self-contained mathematical problem statement in fluent English. Inserted content must be grammatically integrated into the surrounding text, not simply appended or listed separately.
 
 --------------------------------
 [Output Format]

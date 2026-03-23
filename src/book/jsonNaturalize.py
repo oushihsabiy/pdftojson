@@ -433,15 +433,20 @@ def make_retry_prompt(payload: Dict[str, Any]) -> str:
         "Hard constraints:\n"
         "- English only.\n"
         "- Preserve original meaning, task type, notation, formulas, constraints, and quantifiers.\n"
-        "- MUST integrate clearly relevant references from context_references/problem_with_context.\n"
-        "- Do NOT keep pointer-only wording when referenced content is available; expand explicitly.\n"
+        "- MUST integrate all referenced content from context_references/problem_with_context.\n"
+        "- ZERO REFERENCES IN OUTPUT: the output must contain NO equation numbers (e.g., (11.35)),"
+        " NO theorem/lemma/algorithm labels (e.g., Theorem 11.8, Algorithm 11.5),"
+        " NO pointers of the form '(X.Y)', 'Eq. (N)', 'see (N)', 'by Theorem N'."
+        " Every such pointer must be replaced by its actual mathematical content.\n"
+        "- SEMANTIC FLUENCY: the output must be a single, coherent, grammatically fluent mathematical"
+        " statement; inserted content must be naturally integrated, not merely appended.\n"
         "- Complete implicit conditions needed for well-posedness (weakest sufficient assumptions).\n"
         "- Do NOT add assumptions beyond what is necessary.\n"
         "- Do NOT solve the problem.\n"
         "- Do NOT output explanation, markdown, or extra keys.\n"
         "- Use STANDARD LaTeX math notation only; no Unicode math symbols.\n\n"
         "Output template:\n"
-        '{"problem_standardized_math":"<condition-complete, self-contained statement>"}\n\n'
+        '{"problem_standardized_math":"<condition-complete, reference-free, fluent statement>"}\n\n'
         "Input JSON:\n"
         + json.dumps(payload, ensure_ascii=False)
     )
